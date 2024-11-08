@@ -75,7 +75,7 @@ pip install -r requirements.txt
   ```
   python inference.py --input_dir <input_path> --output_dir <output_path>
   ```
-  An example command that produces the same result as the notebook is ```CUDA_VISIBLE_DEVICES=0 python inference.py --input_dir ./examples/111 --output_dir ./output```.
+  An example command that produces the same result as the notebook is ```CUDA_VISIBLE_DEVICES=0 python inference.py --input_dir ./examples/111 --output_dir ./output```. For convenience, we have also provided a shell script, where it can generate all the examples by running ```sh ./inference.sh```.
   
   For the input format of examples, please refer to ```read_condition(input_dir, config)``` in ```inference.py``` for more details. Briefly, each example folder contains the first frame image (```img.png```) and trajectory conditions (```traj.npy```), where the trajectory conditions are encoded by the top-left/bottom-right coordinates of each bounding box + positions of its center coordinate across frames. 
 
