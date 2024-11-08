@@ -27,7 +27,7 @@
 
 <p align="center">
   <a href="">
-    <img src="./assets/sgi2v720x4.gif" width="100%">
+    <img src="./assets/sgi2v480x4.gif" width="100%">
   </a>
 </p>
 
