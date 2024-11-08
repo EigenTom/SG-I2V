@@ -20,7 +20,7 @@
 </p>
    <h3 align="center">
 
-   [![arXiv](https://img.shields.io/badge/arXiv-9999.13333-blue?logo=arxiv&color=%23B31B1B)](https://arxiv.org/abs/) [![ProjectPage](https://img.shields.io/badge/Project_Page-SG--I2V-blue)](https://kmcode1.github.io/Projects/SG-I2V/) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+   [![arXiv](https://img.shields.io/badge/arXiv-2411.04989-blue?logo=arxiv&color=%23B31B1B)](https://arxiv.org/abs/2411.04989) [![ProjectPage](https://img.shields.io/badge/Project_Page-SG--I2V-blue)](https://kmcode1.github.io/Projects/SG-I2V/) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
   <div align="center"></div>
 </p>
 
@@ -92,9 +92,9 @@ Our implementation is partially inspired by <a href="https://github.com/showlab/
 If you find our paper and code useful, please cite us:
 
 ```bib
-@article{TBA,
+@article{namekata2024sgi2v,
   author = {Namekata, Koichi and Bahmani, Sherwin and Wu, Ziyi and Kant, Yash and Gilitschenski, Igor and Lindell, David B.},
   title = {SG-I2V: Self-Guided Trajectory Control in Image-to-Video Generation},
-  journal = {arXiv preprint arXiv: TBA},
+  journal = {arXiv preprint arXiv: 2411.04989},
   year = {2024},
 }
