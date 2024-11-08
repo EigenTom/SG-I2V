@@ -95,6 +95,6 @@ If you find our paper and code useful, please cite us:
 @article{namekata2024sgi2v,
   author = {Namekata, Koichi and Bahmani, Sherwin and Wu, Ziyi and Kant, Yash and Gilitschenski, Igor and Lindell, David B.},
   title = {SG-I2V: Self-Guided Trajectory Control in Image-to-Video Generation},
-  journal = {arXiv preprint arXiv: 2411.04989},
+  journal = {arXiv preprint arXiv:2411.04989},
   year = {2024},
 }
