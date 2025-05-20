@@ -2,3 +2,7 @@
 __pycache__/
 output/
 result.gif
+
+generation_cache/
+generation_cache/*
+.mypy_cache/
