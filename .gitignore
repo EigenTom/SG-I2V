@@ -6,3 +6,9 @@ result.gif
 generation_cache/
 generation_cache/*
 .mypy_cache/
+
+checkpoints/
+checkpoints/*
+
+results/
+results/*
