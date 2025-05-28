@@ -56,6 +56,8 @@ class CrossAttention(nn.Module):
         self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
         self.to_out = nn.Sequential(nn.Linear(inner_dim, query_dim), nn.Dropout(dropout))
 
+        self.last_attention_map = None
+        
         self.image_cross_attention_scale = 1.0
         self.text_context_len = 77
         self.img_cross_attention = img_cross_attention
@@ -71,7 +73,9 @@ class CrossAttention(nn.Module):
         else:
             ## only used for spatial attention, while NOT for temporal attention
             if XFORMERS_IS_AVAILBLE and temporal_length is None:
-                self.forward = self.efficient_forward
+                pass
+                # xformer will not preserve attention map
+                # self.forward = self.efficient_forward
 
     def forward(self, x, context=None, mask=None):
         h = self.heads
@@ -106,7 +110,10 @@ class CrossAttention(nn.Module):
 
         # attention, what we cannot get enough of
         sim = sim.softmax(dim=-1)
+        
+        # hook the attn_map: `sim`
         self.last_attention_map = sim.clone()
+        
         out = torch.einsum('b i j, b j d -> b i d', sim, v)
         if self.relative_position:
             v2 = self.relative_position_v(len_q, len_v)
@@ -164,6 +171,7 @@ class CrossAttention(nn.Module):
         else:
             # Indicate that attention map is not available through this path currently
             self.last_attention_map = None 
+            print(f"[WARNING][CrossAttention] Attention map is not available through this path currently")
 
         ## considering image token additionally
         if context is not None and self.img_cross_attention:
@@ -212,7 +220,10 @@ class BasicTransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
-
+        
+        # Used for investigation
+        self.last_attn_map = None
+        
     def forward(self, x, context=None, mask=None):
         ## implementation tricks: because checkpointing doesn't support non-tensor (e.g. None or scalar) arguments
         input_tuple = (x,)      ## should not be (x), otherwise *input_tuple will decouple x into multiple arguments
@@ -229,6 +240,8 @@ class BasicTransformerBlock(nn.Module):
         x = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None, mask=mask) + x
         x = self.attn2(self.norm2(x), context=context, mask=mask) + x
         x = self.ff(self.norm3(x)) + x
+        
+        self.last_attn_map = self.attn2.last_attention_map.clone()
         return x
 
 
@@ -270,6 +283,7 @@ class SpatialTransformer(nn.Module):
             self.proj_out = zero_module(nn.Linear(inner_dim, in_channels))
         self.use_linear = use_linear
 
+        self.cross_attn_feature_map = None
 
     def forward(self, x, context=None):
         b, c, h, w = x.shape
@@ -287,6 +301,9 @@ class SpatialTransformer(nn.Module):
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
         if not self.use_linear:
             x = self.proj_out(x)
+        
+        self.cross_attn_feature_map = x.clone()
+        
         return x + x_in
     
     

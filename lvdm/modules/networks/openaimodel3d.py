@@ -39,10 +39,6 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
                 x = layer(x, emb, batch_size)
             elif isinstance(layer, SpatialTransformer):
                 x = layer(x, context)
-                
-                # might has multiple layers, we essentially want to get the lowest level output
-                print(f"[DEBUG]SpatialTransformer output shape: {x.shape}")
-                
             elif isinstance(layer, TemporalTransformer):
                 x = rearrange(x, '(b f) c h w -> b c f h w', b=batch_size)
                 x = layer(x, context)
@@ -361,6 +357,7 @@ class UNetModel(nn.Module):
         self.use_image_attention = use_image_attention
         self.fps_cond=fps_cond
 
+        self.hooked_cross_attn_map = []
 
 
         self.time_embed = nn.Sequential(
@@ -375,6 +372,7 @@ class UNetModel(nn.Module):
                 linear(time_embed_dim, time_embed_dim),
             )
 
+        # Input blocks (downsampling blocks)
         self.input_blocks = nn.ModuleList(
             [
                 TimestepEmbedSequential(conv_nd(dims, in_channels, model_channels, 3, padding=1))
@@ -479,8 +477,12 @@ class UNetModel(nn.Module):
                 use_temporal_conv=temporal_conv
                 )
         )
+        
+        # U-Net bottleneck
         self.middle_block = TimestepEmbedSequential(*layers)
 
+        
+        # Upsampling blocks
         self.output_blocks = nn.ModuleList([])
         for level, mult in list(enumerate(channel_mult))[::-1]:
             for i in range(num_res_blocks + 1):
@@ -535,7 +537,7 @@ class UNetModel(nn.Module):
             zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
         )
 
-    def forward(self, x, timesteps, context=None, features_adapter=None, fps=16, **kwargs):
+    def forward(self, x, timesteps, context=None, features_adapter=None, fps=16, explore_only = False, **kwargs):
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
 
@@ -547,6 +549,9 @@ class UNetModel(nn.Module):
 
         b,_,t,_,_ = x.shape
         ## repeat t times for context [(b t) 77 768] & time embedding
+        # context: a list of CLIP text embeddings
+        print(f"[DEBUG]Conditioning textual context shape: {context.shape}") 
+        
         context = context.repeat_interleave(repeats=t, dim=0)
         emb = emb.repeat_interleave(repeats=t, dim=0)
 
@@ -568,7 +573,19 @@ class UNetModel(nn.Module):
         if features_adapter is not None:
             assert len(features_adapter)==adapter_idx, 'Wrong features_adapter'
 
+        # here: context is the list of CLIP text embeddings that is repeated across the frame (t) dimension
+        # need to extract the cross attention feature map of the middle block
         h = self.middle_block(h, emb, context=context, batch_size=b)
+        
+        # get the text-frame cross attention feature map of the middle block
+        # get the `SpatialTransformer` layer in the middle block
+        for module in self.middle_block:
+            if isinstance(module, SpatialTransformer):
+                self.hooked_cross_attn_map.append(module.transformer_blocks[0].last_attn_map)
+                print(f"[DEBUG]Perserved cross attention feature map shape: {self.hooked_cross_attn_map[-1].shape}")
+                if explore_only:
+                    return self.hooked_cross_attn_map
+        
         for module in self.output_blocks:
             h = torch.cat([h, hs.pop()], dim=1)
             h = module(h, emb, context=context, batch_size=b)
