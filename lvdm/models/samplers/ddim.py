@@ -4,6 +4,7 @@ import torch
 from lvdm.models.utils_diffusion import make_ddim_sampling_parameters, make_ddim_timesteps
 from lvdm.common import noise_like
 
+from collections import defaultdict
 
 class DDIMSampler(object):
     def __init__(self, model, schedule="linear", **kwargs):
@@ -210,6 +211,150 @@ class DDIMSampler(object):
         return img, intermediates
 
     @torch.no_grad()
+    def get_attention(self,
+               S,
+               batch_size,
+               shape,
+               conditioning=None,
+               callback=None,
+               normals_sequence=None,
+               img_callback=None,
+               quantize_x0=False,
+               eta=0.,
+               mask=None,
+               x0=None,
+               temperature=1.,
+               noise_dropout=0.,
+               score_corrector=None,
+               corrector_kwargs=None,
+               verbose=True,
+               schedule_verbose=False,
+               x_T=None,
+               log_every_t=100,
+               unconditional_guidance_scale=1.,
+               unconditional_conditioning=None,
+               # this has to come in the same format as the conditioning, # e.g. as encoded tokens, ...
+               **kwargs
+               ):
+        
+        # check condition bs
+        if conditioning is not None:
+            if isinstance(conditioning, dict):
+                try:
+                    cbs = conditioning[list(conditioning.keys())[0]].shape[0]
+                except:
+                    cbs = conditioning[list(conditioning.keys())[0]][0].shape[0]
+
+                if cbs != batch_size:
+                    print(f"Warning: Got {cbs} conditionings but batch-size is {batch_size}")
+            else:
+                if conditioning.shape[0] != batch_size:
+                    print(f"Warning: Got {conditioning.shape[0]} conditionings but batch-size is {batch_size}")
+
+        self.make_schedule(ddim_num_steps=S, ddim_eta=eta, verbose=schedule_verbose)
+        
+        # make shape
+        if len(shape) == 3:
+            C, H, W = shape
+            size = (batch_size, C, H, W)
+        elif len(shape) == 4:
+            C, T, H, W = shape
+            size = (batch_size, C, T, H, W)
+        
+        self.get_attention_(conditioning, size,
+                            callback=callback,
+                            img_callback=img_callback,
+                            quantize_x0=quantize_x0,
+                            mask=mask,
+                            x0=x0,
+                            ddim_use_original_steps=False,
+                            noise_dropout=noise_dropout,
+                            temperature=temperature,
+                            score_corrector=score_corrector,
+                            corrector_kwargs=corrector_kwargs,
+                            x_T=x_T,
+                            log_every_t=log_every_t,
+                            unconditional_guidance_scale=unconditional_guidance_scale,
+                            unconditional_conditioning=unconditional_conditioning,
+                            verbose=verbose,
+                            **kwargs)
+        return self.attn_maps
+    
+    @torch.no_grad()
+    def get_attention_(self, cond, shape,
+                      x_T=None, ddim_use_original_steps=False,
+                      callback=None, timesteps=None, quantize_denoised=False,
+                      mask=None, x0=None, img_callback=None, log_every_t=100,
+                      temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
+                      unconditional_guidance_scale=1., unconditional_conditioning=None, verbose=True,
+                      cond_tau=1., target_size=None, start_timesteps=None,
+                      **kwargs):
+        device = self.model.betas.device
+        b = shape[0]
+
+        # Initialize latent from noise if not provided
+        if x_T is None:
+            img = torch.randn(shape, device=device)
+        else:
+            img = x_T
+
+        # Clear attention map storage
+        self.attn_maps = defaultdict(list)
+
+        # Determine timesteps to use
+        if timesteps is None:
+            timesteps = self.ddpm_num_timesteps if ddim_use_original_steps else self.ddim_timesteps
+        elif not ddim_use_original_steps:
+            subset_end = int(min(timesteps / self.ddim_timesteps.shape[0], 1) * self.ddim_timesteps.shape[0]) - 1
+            timesteps = self.ddim_timesteps[:subset_end]
+
+        # Determine time step range
+        time_range = list(reversed(range(0, timesteps))) if ddim_use_original_steps else np.flip(timesteps)
+        total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
+
+        # Only run one denoising step for attention extraction
+        step = time_range[0]
+        index = total_steps - 1
+        ts = torch.full((b,), step, device=device, dtype=torch.long)
+
+        # set x0
+        clean_cond = kwargs.pop("clean_cond", False)
+        if mask is not None:
+            assert x0 is not None
+            if clean_cond:
+                img_orig = x0
+            else:
+                img_orig = self.model.q_sample(x0, ts)
+            img = img_orig * mask + (1. - mask) * img
+        
+        # Optional: resize latent to target spatial resolution
+        index_clip = int((1 - cond_tau) * total_steps)
+        if index <= index_clip and target_size is not None:
+            target_size_ = [target_size[0], target_size[1] // 8, target_size[2] // 8]
+            img = torch.nn.functional.interpolate(img, size=target_size_, mode="nearest")
+
+        # Run a single forward step through the model to collect attention maps
+        outs = self.p_sample_ddim(
+            img, cond, ts, index=index, use_original_steps=ddim_use_original_steps,
+            quantize_denoised=quantize_denoised, temperature=temperature,
+            noise_dropout=noise_dropout, score_corrector=score_corrector,
+            corrector_kwargs=corrector_kwargs,
+            unconditional_guidance_scale=unconditional_guidance_scale,
+            unconditional_conditioning=unconditional_conditioning,
+            x0=x0,
+            **kwargs
+        )
+
+        # Extract CrossAttention maps from attn2 layers
+        if kwargs.get('save_attn_maps', False):
+            for name, module in self.model.model.diffusion_model.named_modules():
+                if isinstance(module, torch.nn.Module) and type(module).__name__ == 'CrossAttention' and 'attn2' in name:
+                    self.attn_maps[name].append(module.attn_maps)
+        print(f"[INFO][get_attention_] Completed Attn Map Extraction.")
+
+    
+    
+    @torch.no_grad()
     def p_sample_ddim(self, x, c, t, index, repeat_noise=False, use_original_steps=False, quantize_denoised=False,
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None,
@@ -336,3 +481,4 @@ class DDIMSampler(object):
                                           unconditional_conditioning=unconditional_conditioning)
         return x_dec
 
+    

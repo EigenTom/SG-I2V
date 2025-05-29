@@ -1,3 +1,6 @@
+cat
+dog
+sheep
 A squirrel jumping from one tree to another.
 A bear climbing down a tree after spotting a threat. 
 A deer walking in a snowy field.

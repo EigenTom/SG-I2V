@@ -1,18 +1,18 @@
 name="base_512_v2"
 
-ckpt='checkpoints/base_512_v2/model.ckpt'
-config='configs/inference_t2v_512_v2.0.yaml'
+ckpt='SG-I2V/checkpoints/base_512_v2/model.ckpt'
+config='SG-I2V/configs/inference_t2v_512_v2.0.yaml'
 
-prompt_file="prompts/freetraj/text.txt"
-res_dir="results"
+prompt_file="SG-I2V/prompts/freetraj/text.txt"
+res_dir="SG-I2V/results_batch"
 
-python3 scripts/evaluation/inference.py \
+python3 SG-I2V/scripts/evaluation/inference.py \
 --seed 42 \
 --mode 'base' \
 --ckpt_path $ckpt \
 --config $config \
 --savedir $res_dir/$name \
---n_samples 1 \
+--n_samples 5 \
 --bs 1 --height 320 --width 512 \
 --unconditional_guidance_scale 12.0 \
 --ddim_steps 50 \

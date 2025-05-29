@@ -17,6 +17,7 @@ from lvdm.common import (
 from lvdm.basics import (
     zero_module,
 )
+import math
 
 class RelativePosition(nn.Module):
     """ https://github.com/evelinehong/Transformer_Relative_Position_PyTorch/blob/master/relative_position.py """
@@ -43,11 +44,15 @@ class RelativePosition(nn.Module):
 class CrossAttention(nn.Module):
 
     def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0., 
-                 relative_position=False, temporal_length=None, img_cross_attention=False):
+                 relative_position=False, temporal_length=None, img_cross_attention=False, save_map=False):
         super().__init__()
         inner_dim = dim_head * heads
         context_dim = default(context_dim, query_dim)
 
+        # temp hack
+        self.save_map = True
+        self.attn_maps = None
+        
         self.scale = dim_head**-0.5
         self.heads = heads
         self.dim_head = dim_head
@@ -73,9 +78,9 @@ class CrossAttention(nn.Module):
         else:
             ## only used for spatial attention, while NOT for temporal attention
             if XFORMERS_IS_AVAILBLE and temporal_length is None:
-                pass
                 # xformer will not preserve attention map
                 # self.forward = self.efficient_forward
+                self.forward = self.forward
 
     def forward(self, x, context=None, mask=None):
         h = self.heads
@@ -94,12 +99,24 @@ class CrossAttention(nn.Module):
             v = self.to_v(context)
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+        # sim shape = (B×H, N_q, N_k)
         sim = torch.einsum('b i d, b j d -> b i j', q, k) * self.scale
+
+        # print(f"[DEBUG] Query shape: {q.shape}")
+        # print(f"[DEBUG] Key shape: {k.shape}")        
+        # print(f"[DEBUG] x shape: {x.shape}")
+        # print(f"[DEBUG] Context shape: {context.shape}")
+        # print(f"[DEBUG] Attention map shape: {sim.shape}")
+        
+    
         if self.relative_position:
             len_q, len_k, len_v = q.shape[1], k.shape[1], v.shape[1]
             k2 = self.relative_position_k(len_q, len_k)
             sim2 = einsum('b t d, t s d -> b t s', q, k2) * self.scale # TODO check 
             sim += sim2
+
+        # print(f"[DEBUG] probing temporal dimension: t = {sim.shape[1]}")
+        
         del k
 
         if exists(mask):
@@ -111,8 +128,12 @@ class CrossAttention(nn.Module):
         # attention, what we cannot get enough of
         sim = sim.softmax(dim=-1)
         
-        # hook the attn_map: `sim`
-        self.last_attention_map = sim.clone()
+        # size1 != size2: it's not a square matrix (cross_attn instead of self_attn)
+        # so need to be saved
+        if self.save_map and sim.size(1) != sim.size(2):
+            # print(f"[DEBUG] sim shape: {sim.shape}")
+            # self.save_attn_maps(sim.chunk(2)[1])
+            self.save_attn_maps(sim)
         
         out = torch.einsum('b i j, b j d -> b i d', sim, v)
         if self.relative_position:
@@ -171,7 +192,7 @@ class CrossAttention(nn.Module):
         else:
             # Indicate that attention map is not available through this path currently
             self.last_attention_map = None 
-            print(f"[WARNING][CrossAttention] Attention map is not available through this path currently")
+            # print(f"[WARNING][CrossAttention] Attention map is not available through this path currently")
 
         ## considering image token additionally
         if context is not None and self.img_cross_attention:
@@ -202,12 +223,63 @@ class CrossAttention(nn.Module):
         if context is not None and self.img_cross_attention:
             out = out + self.image_cross_attention_scale * out_ip
         return self.to_out(out)
+    
+    def save_attn_maps_2d(self, attn):
+        h = self.heads
+        # aspect_ratio = 5:8
+        tmp_x = math.sqrt(attn.size(1) // 40)
+        height = int(tmp_x * 5)
+        width = int(tmp_x * 8)
+        # print(f"[DEBUG] Height: {height}, Width: {width}")
+        if isinstance(attn, list):
+            # height = width = int(math.sqrt(attn[0].size(1)))
+            self.attn_maps = [rearrange(m.detach(), '(b x) (h w) l -> b x h w l', x=h, h=height, w=width)[...,:40].cpu() for m in attn]
+        else:
+            # height = width = int(math.sqrt(attn.size(1)))
+            self.attn_maps = rearrange(attn.detach(), '(b x) (h w) l -> b x h w l', x=h, h=height, w=width)[...,:40].cpu()
 
+    def save_attn_maps(self, attn, t=16):
+        """
+        Save cross-attention maps with time dimension support for video-text attention.
+
+        Args:
+            attn: Tensor of shape (b*h, hw, l) or list of such tensors.
+            t (int): Number of time steps (frames). Required for video input.
+        """
+        # print(f"[DEBUG] attn shape: {attn.shape}")  # should be 16, 168, 77
+        tmp_x = math.sqrt(attn.size(1) // 40)
+        height = int(tmp_x * 5)
+        width = int(tmp_x * 8)
+        # print(f"[DEBUG] Height: {height}, Width: {width}")
+        
+        
+        h = self.heads
+        if isinstance(attn, list):
+            assert t is not None, "You must provide time steps t when saving video attention maps"
+            self.attn_maps = [
+                rearrange(
+                    m.detach(), 
+                    # change from 16 (t), 160 (h*w), 1280 (b*x) to b x t h w l
+                    # 't (h w) (b x) -> b x t h w',
+                    '(b x t) (h w) l -> b x t h w l',
+                    x=h, h=height, w=width, t=t
+                )[...,:40].cpu()
+                for m in attn
+            ]
+        else:
+            assert t is not None, "You must provide time steps t when saving video attention maps"
+            self.attn_maps = rearrange(
+                attn.detach(), 
+                '(b x t) (h w) l -> b x t h w l', 
+                # 't (h w) (b x) -> b x t h w',
+                x=h, h=height, w=width, t=t
+            )[...,:40].cpu()
+        
 
 class BasicTransformerBlock(nn.Module):
 
     def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=True,
-                disable_self_attn=False, attention_cls=None, img_cross_attention=False):
+                disable_self_attn=False, attention_cls=None, img_cross_attention=False, save_map=False):
         super().__init__()
         attn_cls = CrossAttention if attention_cls is None else attention_cls
         self.disable_self_attn = disable_self_attn
@@ -215,7 +287,7 @@ class BasicTransformerBlock(nn.Module):
             context_dim=context_dim if self.disable_self_attn else None)
         self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
         self.attn2 = attn_cls(query_dim=dim, context_dim=context_dim, heads=n_heads, dim_head=d_head, dropout=dropout,
-            img_cross_attention=img_cross_attention)
+            img_cross_attention=img_cross_attention, save_map=save_map)
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
         self.norm3 = nn.LayerNorm(dim)
@@ -241,7 +313,7 @@ class BasicTransformerBlock(nn.Module):
         x = self.attn2(self.norm2(x), context=context, mask=mask) + x
         x = self.ff(self.norm3(x)) + x
         
-        self.last_attn_map = self.attn2.last_attention_map.clone()
+        self.last_attn_map = self.attn2.last_attention_map.clone() if self.attn2.last_attention_map is not None else None
         return x
 
 
@@ -256,7 +328,7 @@ class SpatialTransformer(nn.Module):
     """
 
     def __init__(self, in_channels, n_heads, d_head, depth=1, dropout=0., context_dim=None,
-                 use_checkpoint=True, disable_self_attn=False, use_linear=False, img_cross_attention=False):
+                 use_checkpoint=True, disable_self_attn=False, use_linear=False, img_cross_attention=False, save_map=False):
         super().__init__()
         self.in_channels = in_channels
         inner_dim = n_heads * d_head
@@ -275,7 +347,8 @@ class SpatialTransformer(nn.Module):
                 context_dim=context_dim,
                 img_cross_attention=img_cross_attention,
                 disable_self_attn=disable_self_attn,
-                checkpoint=use_checkpoint) for d in range(depth)
+                checkpoint=use_checkpoint,
+                save_map=save_map) for d in range(depth)
         ])
         if not use_linear:
             self.proj_out = zero_module(nn.Conv2d(inner_dim, in_channels, kernel_size=1, stride=1, padding=0))

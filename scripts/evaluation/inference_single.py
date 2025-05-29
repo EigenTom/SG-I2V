@@ -44,7 +44,7 @@ def run_inference(args):
 
     # 2. 设置采样参数
     assert (args.height % 16 == 0) and (args.width % 16 == 0), "Error: image size [h,w] should be multiples of 16!"
-    # latent noise shape: 320 // 8 = 40, 512 // 8 = 64 => [64, 64] in spatial dimensions
+    # latent noise shape: 320 // 8 = 40, 512 // 8 = 64 => [40, 64] in spatial dimensions
     h, w = args.height // 8, args.width // 8
     frames = model.temporal_length if args.frames < 0 else args.frames
     channels = model.channels

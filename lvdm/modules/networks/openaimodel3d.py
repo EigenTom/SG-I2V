@@ -33,7 +33,7 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     support it as an extra input.
     """
 
-    def forward(self, x, emb, context=None, batch_size=None):
+    def forward(self, x, emb, context=None, batch_size=None, mask_cond=None):
         for layer in self:
             if isinstance(layer, TimestepBlock):
                 x = layer(x, emb, batch_size)
@@ -550,7 +550,7 @@ class UNetModel(nn.Module):
         b,_,t,_,_ = x.shape
         ## repeat t times for context [(b t) 77 768] & time embedding
         # context: a list of CLIP text embeddings
-        print(f"[DEBUG]Conditioning textual context shape: {context.shape}") 
+        # print(f"[DEBUG]Conditioning textual context shape: {context.shape}") 
         
         context = context.repeat_interleave(repeats=t, dim=0)
         emb = emb.repeat_interleave(repeats=t, dim=0)
@@ -579,12 +579,13 @@ class UNetModel(nn.Module):
         
         # get the text-frame cross attention feature map of the middle block
         # get the `SpatialTransformer` layer in the middle block
-        for module in self.middle_block:
-            if isinstance(module, SpatialTransformer):
-                self.hooked_cross_attn_map.append(module.transformer_blocks[0].last_attn_map)
-                print(f"[DEBUG]Perserved cross attention feature map shape: {self.hooked_cross_attn_map[-1].shape}")
-                if explore_only:
-                    return self.hooked_cross_attn_map
+        # for module in self.middle_block:
+        #     if isinstance(module, SpatialTransformer):
+        #         self.hooked_cross_attn_map.append(module.transformer_blocks[0].last_attn_map)
+        #         if self.hooked_cross_attn_map[-1] is not None:
+        #             print(f"[DEBUG]Perserved cross attention feature map shape: {self.hooked_cross_attn_map[-1].shape}")
+        #         if explore_only:
+        #             return self.hooked_cross_attn_map
         
         for module in self.output_blocks:
             h = torch.cat([h, hs.pop()], dim=1)

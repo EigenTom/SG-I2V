@@ -219,6 +219,7 @@ def save_videos(batch_tensors, savedir, filenames, fps=10):
         grid = (grid + 1.0) / 2.0
         grid = (grid * 255).to(torch.uint8).permute(0, 2, 3, 1)
         savepath = os.path.join(savedir, f"{filenames[idx]}.mp4")
+        os.makedirs(savedir, exist_ok=True)
         torchvision.io.write_video(savepath, grid, fps=fps, video_codec='h264', options={'crf': '10'})
 
 def save_videos_with_bbox(batch_tensors, savedir, conddir, filenames, fps=10, input_traj=[]):
@@ -242,6 +243,7 @@ def save_videos_with_bbox(batch_tensors, savedir, conddir, filenames, fps=10, in
             grid = (grid + 1.0) / 2.0
             grid = (grid * 255).to(torch.uint8).permute(0, 2, 3, 1)
             savepath = os.path.join(savedir, f"{filenames[idx]}_{str(i)}.mp4")
+            os.makedirs(savedir, exist_ok=True)
             torchvision.io.write_video(savepath, grid, fps=fps, video_codec='h264', options={'crf': '10'})
             for j in range(video.shape[0]): 
                 h_start = int(PATHS[j][0] * h_len)
