@@ -1,6 +1,7 @@
 import argparse
 import os
 import torch
+import json
 from omegaconf import OmegaConf
 from pytorch_lightning import seed_everything
 from einops import rearrange
@@ -25,6 +26,20 @@ def get_parser():
     parser.add_argument("--frames", type=int, default=-1, help="frames num to inference")
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--unconditional_guidance_scale", type=float, default=1.0, help="prompt classifier-free guidance")
+    
+    # Arguments for Latent Optimization
+    parser.add_argument("--use_latent_optimization", action='store_true', help="Enable latent optimization for trajectory control")
+    parser.add_argument("--optim_k", type=int, default=10, help="Number of initial steps to apply optimization")
+    parser.add_argument("--optim_epochs", type=int, default=5, help="Number of optimization epochs per step")
+    parser.add_argument("--optim_lr", type=float, default=0.2, help="Learning rate for latent optimization")
+    parser.add_argument("--optim_p_val", type=int, default=100, help="Value of P for top-P selection in loss")
+    parser.add_argument("--optim_ref_layers", type=str, nargs='+', 
+                        default=['output_blocks.5.1.transformer.transformer_blocks.0.attn2', 
+                                 'output_blocks.8.1.transformer.transformer_blocks.0.attn2',
+                                 'input_blocks.4.1.transformer.transformer_blocks.0.attn2'],
+                        help="List of cross-attention layer names to use for loss")
+    parser.add_argument("--optim_bbox_config", type=str, default=None, help="Path to a JSON file with bounding box definitions for each frame")
+
     return parser
 
 def load_prompts(prompt_file):
@@ -62,6 +77,24 @@ def run_inference(args):
 
     # 5. 设置噪声形状
     noise_shape = [1, channels, frames, h, w]  # batch_size=1
+
+    # Latent Optimization Parameters
+    optim_params = None
+    if args.use_latent_optimization:
+        assert args.optim_bbox_config is not None, "Bounding box config must be provided for latent optimization."
+        with open(args.optim_bbox_config, 'r') as f:
+            bbox_config = json.load(f)
+
+        optim_params = {
+            'k': args.optim_k,
+            'epochs': args.optim_epochs,
+            'lr': args.optim_lr,
+            'P': args.optim_p_val,
+            'optim_ref_layers': args.optim_ref_layers,
+            'bbox': bbox_config,
+        }
+        print("Latent optimization enabled with parameters:")
+        print(optim_params)
 
     # 6. 执行DDIM采样
     with torch.no_grad():
@@ -104,7 +137,9 @@ def run_inference(args):
                                                 eta=args.ddim_eta,
                                                 temporal_length=noise_shape[2],
                                                 conditional_guidance_scale_temporal=None, # Not in single inference args
-                                                x_T=x_T
+                                                x_T=x_T,
+                                                use_latent_optimization=args.use_latent_optimization,
+                                                optim_params=optim_params
                                                 )
             sample_pixel = model.decode_first_stage_2DAE(sample_latent)
             samples.append(sample_pixel)

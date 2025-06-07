@@ -117,8 +117,8 @@ class CrossAttention(nn.Module):
 
         # print(f"[DEBUG] probing temporal dimension: t = {sim.shape[1]}")
         
-        del k
-
+        # del k
+        
         if exists(mask):
             ## feasible for causal attention mask only
             max_neg_value = -torch.finfo(sim.dtype).max
@@ -131,9 +131,16 @@ class CrossAttention(nn.Module):
         # size1 != size2: it's not a square matrix (cross_attn instead of self_attn)
         # so need to be saved
         if self.save_map and sim.size(1) != sim.size(2):
-            # print(f"[DEBUG] sim shape: {sim.shape}")
+            # performing cross attn
+            print(f"[DEBUG] q shape: {q.shape}")
+            print(f"[DEBUG] k shape: {k.shape}")
+            print(f"[DEBUG] v shape: {v.shape}")
+            print(f"[DEBUG] sim shape: {sim.shape}")
+            
             # self.save_attn_maps(sim.chunk(2)[1])
             self.save_attn_maps(sim)
+        
+        del k
         
         out = torch.einsum('b i j, b j d -> b i d', sim, v)
         if self.relative_position:
@@ -246,7 +253,7 @@ class CrossAttention(nn.Module):
             attn: Tensor of shape (b*h, hw, l) or list of such tensors.
             t (int): Number of time steps (frames). Required for video input.
         """
-        # print(f"[DEBUG] attn shape: {attn.shape}")  # should be 16, 168, 77
+        print(f"[DEBUG] attn shape: {attn.shape}")  # should be 16, 168, 77
         tmp_x = math.sqrt(attn.size(1) // 40)
         height = int(tmp_x * 5)
         width = int(tmp_x * 8)
@@ -274,6 +281,8 @@ class CrossAttention(nn.Module):
                 # 't (h w) (b x) -> b x t h w',
                 x=h, h=height, w=width, t=t
             )[...,:40].cpu()
+        
+        print(f"[DEBUG] attn_maps shape: {self.attn_maps.shape}")
         
 
 class BasicTransformerBlock(nn.Module):

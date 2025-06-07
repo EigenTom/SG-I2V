@@ -3,6 +3,7 @@ from tqdm import tqdm
 import torch
 from lvdm.models.utils_diffusion import make_ddim_sampling_parameters, make_ddim_timesteps
 from lvdm.common import noise_like
+from lvdm.models.samplers.latent_optimizer import LatentOptimizer
 
 from collections import defaultdict
 
@@ -84,6 +85,8 @@ class DDIMSampler(object):
                unconditional_guidance_scale=1.,
                unconditional_conditioning=None,
                # this has to come in the same format as the conditioning, # e.g. as encoded tokens, ...
+               use_latent_optimization=False,
+               optim_params=None,
                **kwargs
                ):
         
@@ -127,6 +130,8 @@ class DDIMSampler(object):
                                                     unconditional_guidance_scale=unconditional_guidance_scale,
                                                     unconditional_conditioning=unconditional_conditioning,
                                                     verbose=verbose,
+                                                    use_latent_optimization=use_latent_optimization,
+                                                    optim_params=optim_params,
                                                     **kwargs)
         return samples, intermediates
 
@@ -138,6 +143,7 @@ class DDIMSampler(object):
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None, verbose=True,
                       cond_tau=1., target_size=None, start_timesteps=None,
+                      use_latent_optimization=False, optim_params=None,
                       **kwargs):
         device = self.model.betas.device        
         print('ddim device', device)
@@ -163,9 +169,20 @@ class DDIMSampler(object):
 
         init_x0 = False
         clean_cond = kwargs.pop("clean_cond", False)
+        
         for i, step in enumerate(iterator):
             index = total_steps - i - 1
             ts = torch.full((b,), step, device=device, dtype=torch.long)
+            
+            if use_latent_optimization and optim_params and i < optim_params['k']:
+                print(f"Running latent optimization for step {i+1}/{total_steps} (timestep {step})")
+                img.requires_grad = True
+                optimizer = LatentOptimizer(self.model, optim_params)
+                
+                # The DDIM sampler is in no_grad context, so we need to enable it for optimization
+                with torch.enable_grad():
+                    img = optimizer.optimize(img, cond, ts, unconditional_conditioning, unconditional_guidance_scale)
+            
             if start_timesteps is not None:
                 assert x0 is not None
                 if step > start_timesteps*time_range[0]:
@@ -234,6 +251,8 @@ class DDIMSampler(object):
                unconditional_guidance_scale=1.,
                unconditional_conditioning=None,
                # this has to come in the same format as the conditioning, # e.g. as encoded tokens, ...
+               use_latent_optimization=False,
+               optim_params=None,
                **kwargs
                ):
         
@@ -277,6 +296,8 @@ class DDIMSampler(object):
                             unconditional_guidance_scale=unconditional_guidance_scale,
                             unconditional_conditioning=unconditional_conditioning,
                             verbose=verbose,
+                            use_latent_optimization=use_latent_optimization,
+                            optim_params=optim_params,
                             **kwargs)
         return self.attn_maps
     
@@ -288,6 +309,7 @@ class DDIMSampler(object):
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None, verbose=True,
                       cond_tau=1., target_size=None, start_timesteps=None,
+                      use_latent_optimization=False, optim_params=None,
                       **kwargs):
         device = self.model.betas.device
         b = shape[0]

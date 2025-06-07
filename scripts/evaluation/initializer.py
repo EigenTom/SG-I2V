@@ -26,7 +26,7 @@ class initializer:
                     for bid, p in enumerate(prompt):
                         uc = self.model.get_learned_conditioning([""])
                         kv = self.model.get_learned_conditioning(p)
-                        fps = torch.tensor([8]).to(self.model.device).long()    # 8: fps, parameter
+                        fps = torch.tensor([self.T]).to(self.model.device).long()    # 16: fps, parameter
                         c = {"c_crossattn": [kv], "fps": fps}
                         shape = [self.C, self.H // self.f, self.W // self.f]
                         self.sampler.get_attention(S=steps,
@@ -41,8 +41,12 @@ class initializer:
                                         quiet=True,
                                         mask_cond=self.cond,
                                         save_attn_maps=True)
-        all_attn_maps = [item[0][0] for item in self.sampler.attn_maps['input_blocks.8.1.transformer_blocks.0.attn2']]
-        # avg_maps = [torch.mean(item, axis=0) for item in all_attn_maps]
+        all_attn_maps = [item[0] for item in self.sampler.attn_maps['input_blocks.5.1.transformer_blocks.0.attn2']]
+        # we are not using masked_qkv as in Initial-Noise-Editing now, so only one layer of list
+        # all_attn_maps = [item[0][0] for item in self.sampler.attn_maps['input_blocks.8.1.transformer_blocks.0.attn2']]
+        avg_maps = [torch.mean(item, axis=0) for item in all_attn_maps]
+        
+        # what are they doing?
         # avg_maps = [rearrange(item, 'w h d -> d w h')[None,:] for item in avg_maps]
         # avg_maps = rearrange(torch.cat(avg_maps,dim=0), 't word w h -> word t w h')
-        return all_attn_maps
+        return avg_maps, self.sampler.attn_maps
