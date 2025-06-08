@@ -132,10 +132,10 @@ class CrossAttention(nn.Module):
         # so need to be saved
         if self.save_map and sim.size(1) != sim.size(2):
             # performing cross attn
-            print(f"[DEBUG] q shape: {q.shape}")
-            print(f"[DEBUG] k shape: {k.shape}")
-            print(f"[DEBUG] v shape: {v.shape}")
-            print(f"[DEBUG] sim shape: {sim.shape}")
+            # print(f"[DEBUG] q shape: {q.shape}")
+            # print(f"[DEBUG] k shape: {k.shape}")
+            # print(f"[DEBUG] v shape: {v.shape}")
+            # print(f"[DEBUG] sim shape: {sim.shape}")
             
             # self.save_attn_maps(sim.chunk(2)[1])
             self.save_attn_maps(sim)
@@ -240,10 +240,10 @@ class CrossAttention(nn.Module):
         # print(f"[DEBUG] Height: {height}, Width: {width}")
         if isinstance(attn, list):
             # height = width = int(math.sqrt(attn[0].size(1)))
-            self.attn_maps = [rearrange(m.detach(), '(b x) (h w) l -> b x h w l', x=h, h=height, w=width)[...,:40].cpu() for m in attn]
+            self.attn_maps = [rearrange(m, '(b x) (h w) l -> b x h w l', x=h, h=height, w=width)[...,:40] for m in attn]
         else:
             # height = width = int(math.sqrt(attn.size(1)))
-            self.attn_maps = rearrange(attn.detach(), '(b x) (h w) l -> b x h w l', x=h, h=height, w=width)[...,:40].cpu()
+            self.attn_maps = rearrange(attn, '(b x) (h w) l -> b x h w l', x=h, h=height, w=width)[...,:40]
 
     def save_attn_maps(self, attn, t=16):
         """
@@ -253,7 +253,7 @@ class CrossAttention(nn.Module):
             attn: Tensor of shape (b*h, hw, l) or list of such tensors.
             t (int): Number of time steps (frames). Required for video input.
         """
-        print(f"[DEBUG] attn shape: {attn.shape}")  # should be 16, 168, 77
+        # print(f"[DEBUG] attn shape: {attn.shape}")  # should be 16, 168, 77
         tmp_x = math.sqrt(attn.size(1) // 40)
         height = int(tmp_x * 5)
         width = int(tmp_x * 8)
@@ -261,28 +261,29 @@ class CrossAttention(nn.Module):
         
         
         h = self.heads
+        # Note: must not detach the attn, otherwise the gradient will be lost
         if isinstance(attn, list):
             assert t is not None, "You must provide time steps t when saving video attention maps"
             self.attn_maps = [
                 rearrange(
-                    m.detach(), 
+                    m, 
                     # change from 16 (t), 160 (h*w), 1280 (b*x) to b x t h w l
                     # 't (h w) (b x) -> b x t h w',
                     '(b x t) (h w) l -> b x t h w l',
                     x=h, h=height, w=width, t=t
-                )[...,:40].cpu()
+                )[...,:40]
                 for m in attn
             ]
         else:
             assert t is not None, "You must provide time steps t when saving video attention maps"
             self.attn_maps = rearrange(
-                attn.detach(), 
+                attn, 
                 '(b x t) (h w) l -> b x t h w l', 
                 # 't (h w) (b x) -> b x t h w',
                 x=h, h=height, w=width, t=t
-            )[...,:40].cpu()
+            )[...,:40]
         
-        print(f"[DEBUG] attn_maps shape: {self.attn_maps.shape}")
+        # print(f"[DEBUG] attn_maps shape: {self.attn_maps.shape}")
         
 
 class BasicTransformerBlock(nn.Module):
@@ -306,6 +307,7 @@ class BasicTransformerBlock(nn.Module):
         self.last_attn_map = None
         
     def forward(self, x, context=None, mask=None):
+        # use checkpointing will cause the gradient to be lost for attention map optimization
         ## implementation tricks: because checkpointing doesn't support non-tensor (e.g. None or scalar) arguments
         input_tuple = (x,)      ## should not be (x), otherwise *input_tuple will decouple x into multiple arguments
         if context is not None:

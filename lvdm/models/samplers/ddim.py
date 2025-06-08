@@ -174,6 +174,9 @@ class DDIMSampler(object):
             index = total_steps - i - 1
             ts = torch.full((b,), step, device=device, dtype=torch.long)
             
+            # perform latent optimization from the total_steps step until the total_steps - optim_params['k'] step
+            # because denoising process is backward, start from the total_steps step
+            print(f"current step: {i}, total_steps: {total_steps}")
             if use_latent_optimization and optim_params and i < optim_params['k']:
                 print(f"Running latent optimization for step {i+1}/{total_steps} (timestep {step})")
                 img.requires_grad = True
@@ -181,7 +184,7 @@ class DDIMSampler(object):
                 
                 # The DDIM sampler is in no_grad context, so we need to enable it for optimization
                 with torch.enable_grad():
-                    img = optimizer.optimize(img, cond, ts, unconditional_conditioning, unconditional_guidance_scale)
+                    img = optimizer.optimize(img, cond, ts, unconditional_conditioning, unconditional_guidance_scale, lr_scale_ratio=(optim_params['k']-i-1)/optim_params['k'])
             
             if start_timesteps is not None:
                 assert x0 is not None

@@ -17,27 +17,42 @@ def get_parser():
     parser.add_argument("--config", type=str, help="config (yaml) path")
     parser.add_argument("--prompt_file", type=str, default=None, help="a text file containing many prompts")
     parser.add_argument("--savedir", type=str, default=None, help="results saving path")
-    parser.add_argument("--savefps", type=int, default=10, help="video fps to generate")
+    parser.add_argument("--savefps", type=int, default=16, help="video fps to generate")
     parser.add_argument("--n_samples", type=int, default=1, help="num of samples per prompt")
-    parser.add_argument("--ddim_steps", type=int, default=50, help="steps of ddim if positive, otherwise use DDPM")
+    parser.add_argument("--ddim_steps", type=int, default=30, help="steps of ddim if positive, otherwise use DDPM")
     parser.add_argument("--ddim_eta", type=float, default=1.0, help="eta for ddim sampling")
-    parser.add_argument("--height", type=int, default=512, help="image height, in pixel space")
+    parser.add_argument("--height", type=int, default=320, help="image height, in pixel space")
     parser.add_argument("--width", type=int, default=512, help="image width, in pixel space")
-    parser.add_argument("--frames", type=int, default=-1, help="frames num to inference")
-    parser.add_argument("--fps", type=int, default=24)
-    parser.add_argument("--unconditional_guidance_scale", type=float, default=1.0, help="prompt classifier-free guidance")
-    
+    parser.add_argument("--frames", type=int, default=16, help="frames num to inference")
+    parser.add_argument("--fps", type=int, default=16)
+    parser.add_argument("--unconditional_guidance_scale", type=float, default=7.5, help="prompt classifier-free guidance")
+    parser.add_argument("--unconditional_guidance_scale_temporal", type=float, default=None, help="temporal consistency guidance")
+
     # Arguments for Latent Optimization
     parser.add_argument("--use_latent_optimization", action='store_true', help="Enable latent optimization for trajectory control")
-    parser.add_argument("--optim_k", type=int, default=10, help="Number of initial steps to apply optimization")
-    parser.add_argument("--optim_epochs", type=int, default=5, help="Number of optimization epochs per step")
+    parser.add_argument("--optim_k", type=int, default=5, help="Number of initial steps to apply optimization")
+    parser.add_argument("--optim_epochs", type=int, default=3, help="Number of optimization epochs per step")
     parser.add_argument("--optim_lr", type=float, default=0.2, help="Learning rate for latent optimization")
-    parser.add_argument("--optim_p_val", type=int, default=100, help="Value of P for top-P selection in loss")
+    parser.add_argument("--optim_p_val", type=int, default=20, help="Value of P for top-P selection in loss")
+    # parser.add_argument("--optim_ref_layers", type=str, nargs='+', 
+    #                     default=['output_blocks.5.1.transformer_blocks.0.attn2', 
+    #                              'output_blocks.8.1.transformer_blocks.0.attn2',
+    #                              'input_blocks.4.1.transformer_blocks.0.attn2'],
+    #                     help="List of cross-attention layer names to use for loss")
+    
     parser.add_argument("--optim_ref_layers", type=str, nargs='+', 
-                        default=['output_blocks.5.1.transformer.transformer_blocks.0.attn2', 
-                                 'output_blocks.8.1.transformer.transformer_blocks.0.attn2',
-                                 'input_blocks.4.1.transformer.transformer_blocks.0.attn2'],
+                        default=[
+                            'input_blocks.4.1.transformer_blocks.0.attn2',
+                            'input_blocks.5.1.transformer_blocks.0.attn2',
+                            'input_blocks.8.1.transformer_blocks.0.attn2',
+                            # 'output_blocks.4.1.transformer_blocks.0.attn2',
+                            # 'output_blocks.6.1.transformer_blocks.0.attn2',
+                            # 'output_blocks.7.1.transformer_blocks.0.attn2'
+                        ],
                         help="List of cross-attention layer names to use for loss")
+    
+    
+    
     parser.add_argument("--optim_bbox_config", type=str, default=None, help="Path to a JSON file with bounding box definitions for each frame")
 
     return parser
@@ -47,7 +62,7 @@ def load_prompts(prompt_file):
         prompts = [line.strip() for line in f.readlines()]
     return prompts
 
-def run_inference(args):
+def run_inference(args, **kwargs):
     # 1. 加载模型配置和检查点
     config = OmegaConf.load(args.config)
     model_config = config.pop("model", OmegaConf.create())
@@ -79,6 +94,7 @@ def run_inference(args):
     noise_shape = [1, channels, frames, h, w]  # batch_size=1
 
     # Latent Optimization Parameters
+    # args.use_latent_optimization = False
     optim_params = None
     if args.use_latent_optimization:
         assert args.optim_bbox_config is not None, "Bounding box config must be provided for latent optimization."
@@ -139,7 +155,8 @@ def run_inference(args):
                                                 conditional_guidance_scale_temporal=None, # Not in single inference args
                                                 x_T=x_T,
                                                 use_latent_optimization=args.use_latent_optimization,
-                                                optim_params=optim_params
+                                                optim_params=optim_params,
+                                                **kwargs
                                                 )
             sample_pixel = model.decode_first_stage_2DAE(sample_latent)
             samples.append(sample_pixel)
