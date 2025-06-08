@@ -26,63 +26,6 @@ class LatentOptimizer:
                     attn_maps[name] = module.attn_maps
         return attn_maps
 
-    def _get_layer_resolution(self, layer_name):
-        # This function infers the spatial resolution of the feature map at a given layer.
-        # It's based on the U-Net architecture where resolution is halved at certain stages.
-        # `attention_resolutions` in the config are [4, 2, 1].
-        # These correspond to `ds` values which are powers of 2, representing downsampling factor.
-        # ds=1 -> 1/8 of latent size, ds=2 -> 1/16, ds=4 -> 1/32
-        # Base latent size (h,w) is (40, 64) for 320x512 input.
-        
-        # Let's map block names to downsampling factors (ds)
-        # The UNet has input_blocks, a middle_block, and output_blocks.
-        # `channel_mult` is (1, 2, 4, 4), len=4, so 4 levels.
-        # Level 0: no downsample (ds=1)
-        # Level 1: ds=2
-        # Level 2: ds=4
-        # Level 3: ds=8
-        # The attention resolutions are checked against `ds`.
-        # So we have attention at ds=4 and ds=2 and ds=1... wait, this is confusing.
-        
-        # Simpler approach: let's trace layer names.
-        # input_blocks are indexed 0 to 11.
-        # middle_block is one block.
-        # output_blocks are indexed 0 to 11.
-        
-        # From my previous analysis:
-        # `input_blocks.8.1` -> this is deep in the encoder
-        # `output_blocks.3.1`, `output_blocks.4.1`, `output_blocks.5.1` -> decoder
-        
-        # The feature map size halves at blocks 1, 2, 4 in input_blocks
-        # and doubles at blocks 7, 8, 10 in output_blocks (roughly).
-        
-        # Based on `openaimodel3d.py`, the `ds` value increases in the input blocks
-        # and decreases in the output blocks.
-        # Let's create a rough mapping.
-        # initial h, w
-        # will be 40, 64
-        h, w = self.model.image_size[0], self.model.image_size[1]
-        
-        if 'input_blocks.4' in layer_name or 'output_blocks.7' in layer_name: # 2x downsample
-            return h // 2, w // 2 # 20, 32#
-        if 'input_blocks.5' in layer_name or 'output_blocks.6' in layer_name: # 2x downsample
-            return h // 2, w // 2 # 20, 32
-        if 'input_blocks.7' in layer_name or 'output_blocks.4' in layer_name: # 4x downsample
-            return h // 4, w // 4 # 10, 16
-        if 'input_blocks.8' in layer_name or 'output_blocks.3' in layer_name: # 4x downsample
-            return h // 4, w // 4 # 10, 16
-        # no such layers are exposed as cross-attn layers
-        # if 'input_blocks.10' in layer_name or 'output_blocks.1' in layer_name: # 8x downsample
-        #     return h // 8, w // 8
-        # if 'input_blocks.11' in layer_name or 'output_blocks.0' in layer_name: # 8x downsample
-        #     return h // 8, w // 8
-        if 'middle_block' in layer_name:
-            return h // 8, w // 8 # 5, 8
-            
-        # Default to a reasonable guess if no match
-        return h // 4, w // 4
-
-
     def calculate_spatial_loss(self, attn_maps, bboxes, P):
         """
         Calculates the spatial loss based on attention maps and bounding boxes.
@@ -137,12 +80,12 @@ class LatentOptimizer:
                     print(f"[DEBUG] check attn_outside shape: {attn_outside.shape}")
 
                     # Loss for enhancing activations inside bbox
-                    P_inside = int(attn_inside.numel() * 1)
+                    P_inside = int(attn_inside.numel() * 0.6)
                     top_p_inside, _ = torch.topk(attn_inside, P_inside)
                     loss_inbox = 1 - torch.mean(top_p_inside)
                     
                     # Loss for suppressing activations outside bbox
-                    P_outside = int(attn_outside.numel() * 0.95)
+                    P_outside = int(attn_outside.numel() * 0.8)
                     top_p_outside, _ = torch.topk(attn_outside, P_outside)
                     loss_outbox = torch.mean(top_p_outside)
 
@@ -150,7 +93,8 @@ class LatentOptimizer:
 
                     num_maps += 1
         
-        return loss / num_maps if num_maps > 0 else torch.tensor(0.0, device=self.model.device)
+        return loss / num_maps
+        # return loss / num_maps if num_maps > 0 else torch.tensor(0.0, device=self.model.device)
 
 
     def optimize(self, latent, cond, ts, unconditional_conditioning, unconditional_guidance_scale, uc_type=None, lr_scale_ratio=1.0):
@@ -162,7 +106,10 @@ class LatentOptimizer:
 
         # Setup optimizer
         print(f"lr_scale_ratio: {lr_scale_ratio}")
-        optimizer = torch.optim.AdamW([latent_opt], lr=self.optim_params['lr'] * lr_scale_ratio)
+        
+        # set learning rate decay exponentially based on the lr_scale_ratio * 10
+        # optimizer = torch.optim.AdamW([latent_opt], lr=self.optim_params['lr'] * lr_scale_ratio)
+        optimizer = torch.optim.AdamW([latent_opt], lr=1.5 * self.optim_params['lr'] * (0.9 ** lr_scale_ratio))
 
         # Identify target transformer blocks and temporarily disable checkpointing
         target_blocks = []
