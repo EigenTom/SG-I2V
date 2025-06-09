@@ -4,8 +4,8 @@ python3 ./scripts/evaluation/inference_single.py \
 --prompt_file "./test_prompt.txt" \
 --savedir "./results/optimized_run" \
 --use_latent_optimization \
---optim_bbox_config "./bbox_center.json" \
---optim_k 10 \
+--optim_bbox_config "./bbox_vertical.json" \
+--optim_k 15 \
 --optim_lr 0.02 \
 --optim_epochs 4 \
 --optim_ref_layers \
@@ -19,11 +19,11 @@ python3 ./scripts/evaluation/inference_single.py \
     'output_blocks.5.1.transformer_blocks.0.attn2' \
     'output_blocks.6.1.transformer_blocks.0.attn2' \
     'output_blocks.7.1.transformer_blocks.0.attn2' \
-    # 'input_blocks.1.1.transformer_blocks.0.attn2' \
-    # 'input_blocks.2.1.transformer_blocks.0.attn2' \
-    # 'output_blocks.8.1.transformer_blocks.0.attn2' \
-    # 'output_blocks.10.1.transformer_blocks.0.attn2' \
-    # 'output_blocks.11.1.transformer_blocks.0.attn2' \
+    'input_blocks.1.1.transformer_blocks.0.attn2' \
+    'input_blocks.2.1.transformer_blocks.0.attn2' \
+    'output_blocks.8.1.transformer_blocks.0.attn2' \
+    'output_blocks.10.1.transformer_blocks.0.attn2' \
+    'output_blocks.11.1.transformer_blocks.0.attn2' \
 # --optim_k 15 \
 # --optim_lr 0.08 \
 # lr too low: cannot ctrl object location, or produce mixed results

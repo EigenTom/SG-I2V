@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from collections import defaultdict
 from tqdm import tqdm
+from utils.utils import get_freq_filter, freq_mix_3d
 
 class LatentOptimizer:
     def __init__(self, model, optim_params):
@@ -49,7 +50,7 @@ class LatentOptimizer:
             h, w = height, width
             num_frames = total_frames
 
-            print(f"[DEBUG] bboxes: {bboxes}\n\n")
+            # print(f"[DEBUG] bboxes: {bboxes}\n\n")
 
 
             for f_idx in range(num_frames):
@@ -76,8 +77,8 @@ class LatentOptimizer:
                     # Outside bbox
                     attn_outside = curr_frame_attn_map[mask == 0]
                     
-                    print(f"[DEBUG] check attn_inside shape: {attn_inside.shape}")
-                    print(f"[DEBUG] check attn_outside shape: {attn_outside.shape}")
+                    # print(f"[DEBUG] check attn_inside shape: {attn_inside.shape}")
+                    # print(f"[DEBUG] check attn_outside shape: {attn_outside.shape}")
 
                     # Loss for enhancing activations inside bbox
                     P_inside = int(attn_inside.numel() * 0.6)
@@ -96,7 +97,24 @@ class LatentOptimizer:
         return loss / num_maps
         # return loss / num_maps if num_maps > 0 else torch.tensor(0.0, device=self.model.device)
 
-
+    def apply_hf_filter(self, optimized_latent, original_latent):
+        freq_filter = get_freq_filter(
+            shape=optimized_latent.shape,
+            device=optimized_latent.device,
+            filter_type="butterworth",
+            n=4,
+            d_s=0.25,
+            d_t=0.1
+        )
+        
+        result_latent = freq_mix_3d(
+            x=optimized_latent,
+            noise=original_latent,
+            LPF=freq_filter
+        )
+        return result_latent
+        
+        
     def optimize(self, latent, cond, ts, unconditional_conditioning, unconditional_guidance_scale, uc_type=None, lr_scale_ratio=1.0):
         """
         Optimizes the latent representation.
@@ -108,8 +126,10 @@ class LatentOptimizer:
         print(f"lr_scale_ratio: {lr_scale_ratio}")
         
         # set learning rate decay exponentially based on the lr_scale_ratio * 10
-        # optimizer = torch.optim.AdamW([latent_opt], lr=self.optim_params['lr'] * lr_scale_ratio)
-        optimizer = torch.optim.AdamW([latent_opt], lr=1.5 * self.optim_params['lr'] * (0.9 ** lr_scale_ratio))
+        optimizer = torch.optim.AdamW([latent_opt], lr=self.optim_params['lr'] * lr_scale_ratio)
+        # optimizer = torch.optim.AdamW([latent_opt], lr=self.optim_params['lr'] * (0.9 ** lr_scale_ratio))
+
+        
 
         # Identify target transformer blocks and temporarily disable checkpointing
         target_blocks = []
@@ -173,10 +193,33 @@ class LatentOptimizer:
                     )
 
                     if loss.requires_grad:
+
+                        # fix the high-frequency info in original latent, prevent visual distortion
+                        # first store the original latent, will extract low-freq features from it
+                        
+                        original_latent = latent.clone().detach()  # Store the original latent for high-frequency filtering
+
                         # Backward pass
                         loss.backward()
                         optimizer.step()
                         print(f"Epoch {epoch+1}/{self.optim_params['epochs']}, Loss: {loss.item()}")
+                        
+                        # perform FFT on latent_opt to replace its high-freq features with those from original_latent
+                        # latent_opt size: (B, C, T, H, W)
+                        print(f"[DEBUG] latent_opt shape: {latent_opt.shape}")
+                        latent_opt_val = self.apply_hf_filter(
+                            optimized_latent = latent_opt,
+                            original_latent = original_latent,
+                        )
+                        # assign value to the latent opt
+                        latent_opt.data.copy_(latent_opt_val)
+                        
+                        # latent_opt = latent_opt.requires_grad_(True)
+                        
+                        # delete original_latent to save memory
+                        del original_latent, latent_opt_val
+                        
+                        
                     else:
                         print(f"Epoch {epoch+1}/{self.optim_params['epochs']}, Loss: {loss.item()} (not a valid gradient)")
                         break
@@ -185,6 +228,8 @@ class LatentOptimizer:
             for block, state in zip(target_blocks, original_checkpoint_states):
                 block.checkpoint = state
 
+        # remove the current optimizer
+        del optimizer
 
         print("Latent optimization finished.")
         return latent_opt.detach() 
