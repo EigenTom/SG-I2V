@@ -130,7 +130,6 @@ class LatentOptimizer:
         # optimizer = torch.optim.AdamW([latent_opt], lr=self.optim_params['lr'] * (0.9 ** lr_scale_ratio))
 
         
-        original_latent = latent.clone().detach()  # Store the original latent for high-frequency filtering
 
         # Identify target transformer blocks and temporarily disable checkpointing
         target_blocks = []
@@ -198,7 +197,7 @@ class LatentOptimizer:
                         # fix the high-frequency info in original latent, prevent visual distortion
                         # first store the original latent, will extract low-freq features from it
                         
-                        # original_latent = latent.clone().detach()  # Store the original latent for high-frequency filtering
+                        original_latent = latent.clone().detach()  # Store the original latent for high-frequency filtering
 
                         # Backward pass
                         loss.backward()
@@ -207,18 +206,18 @@ class LatentOptimizer:
                         
                         # perform FFT on latent_opt to replace its high-freq features with those from original_latent
                         # latent_opt size: (B, C, T, H, W)
-                        # print(f"[DEBUG] latent_opt shape: {latent_opt.shape}")
-                        # latent_opt_val = self.apply_hf_filter(
-                        #     optimized_latent = latent_opt,
-                        #     original_latent = original_latent,
-                        # )
+                        print(f"[DEBUG] latent_opt shape: {latent_opt.shape}")
+                        latent_opt_val = self.apply_hf_filter(
+                            optimized_latent = latent_opt,
+                            original_latent = original_latent,
+                        )
                         # assign value to the latent opt
-                        # latent_opt.data.copy_(latent_opt_val)
+                        latent_opt.data.copy_(latent_opt_val)
                         
                         # latent_opt = latent_opt.requires_grad_(True)
                         
                         # delete original_latent to save memory
-                        # del original_latent, latent_opt_val
+                        del original_latent, latent_opt_val
                         
                         
                     else:
@@ -231,20 +230,6 @@ class LatentOptimizer:
 
         # remove the current optimizer
         del optimizer
-
-
-
-        # new experiment: fix the latent AFTER all optimizations done
-        # perform FFT on latent_opt to replace its high-freq features with those from original_latent
-        # latent_opt size: (B, C, T, H, W)
-        print(f"[DEBUG] latent_opt shape: {latent_opt.shape}")
-        latent_opt_val = self.apply_hf_filter(
-            optimized_latent = latent_opt,
-            original_latent = original_latent,
-        )
-        # assign value to the latent opt
-        latent_opt.data.copy_(latent_opt_val)
-        del original_latent, latent_opt_val
 
         print("Latent optimization finished.")
         return latent_opt.detach() 
